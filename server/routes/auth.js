@@ -2,6 +2,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
+import twilio from "twilio";
 import User from "../models/User.js";
 import { protect } from "../middleware/authMiddleware.js";
 
@@ -21,8 +22,56 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+// Initialize Twilio client securely
+// Initialize Twilio client securely with trim to prevent authentication issues
+const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_ACCOUNT_SID.trim().startsWith("AC") && process.env.TWILIO_AUTH_TOKEN)
+  ? twilio(process.env.TWILIO_ACCOUNT_SID.trim(), process.env.TWILIO_AUTH_TOKEN.trim())
+  : null;
+
 // Temporary in-memory store for OTPs (In production, use Redis or a DB)
 const otpStore = new Map();
+
+// Safe Twilio Diagnostic Route (Accessible at http://localhost:5000/api/auth/test-twilio-debug)
+router.get("/test-twilio-debug", async (req, res) => {
+  const mask = (str) => {
+    if (!str) return "UNDEFINED/NULL";
+    const clean = str.trim();
+    if (clean.length <= 8) return "***TOO_SHORT***";
+    return `${clean.substring(0, 4)}...${clean.substring(clean.length - 4)} (Length: ${clean.length})`;
+  };
+
+  const configState = {
+    ACCOUNT_SID: mask(process.env.TWILIO_ACCOUNT_SID),
+    AUTH_TOKEN: mask(process.env.TWILIO_AUTH_TOKEN),
+    PHONE_NUMBER: mask(process.env.TWILIO_PHONE_NUMBER),
+  };
+
+  try {
+    if (!twilioClient) {
+      throw new Error("twilioClient is NULL - Initialization condition failed.");
+    }
+    
+    // Attempt to fetch account details to verify credentials
+    const account = await twilioClient.api.v2010.accounts(process.env.TWILIO_ACCOUNT_SID.trim()).fetch();
+    
+    return res.json({
+      status: "Twilio Authenticated Successfully!",
+      configState,
+      accountName: account.friendlyName,
+      accountType: account.type,
+      accountStatus: account.status
+    });
+  } catch (err) {
+    return res.status(500).json({
+      status: "Twilio Connection Failed",
+      configState,
+      errorMessage: err.message,
+      errorCode: err.code || "NO_CODE",
+      errorStatus: err.status || "NO_STATUS",
+      errorDetails: err
+    });
+  }
+});
 
 router.post("/send-otp", async (req, res) => {
   const { phone, email } = req.body;
@@ -37,17 +86,77 @@ router.post("/send-otp", async (req, res) => {
   console.log(`OTP for ${phone} / ${email || 'No Email'}: ${otp}`);
   console.log("-----------------------");
 
-  if (email) {
+  // Send SMS OTP via Twilio if configured
+  if (phone && twilioClient && process.env.TWILIO_PHONE_NUMBER) {
     try {
-      await transporter.sendMail({
-        from: `"LearnChart Quest" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: "LearnChart Quest - Verification Code",
-        text: `Your verification code is: ${otp}\n\nIt will expire in 5 minutes.`
+      // Auto-prefix standard 10-digit numbers with India country code (+91) as convenience 
+      const formattedPhone = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
+      await twilioClient.messages.create({
+        body: `Your LearnChart verification code is: ${otp}. It will expire in 5 minutes.`,
+        from: process.env.TWILIO_PHONE_NUMBER.trim(),
+        to: formattedPhone
       });
-      console.log(`[EMAIL] Successfully sent to ${email}`);
+      console.log(`[SMS] Successfully sent to ${formattedPhone}`);
     } catch (err) {
-      console.error("[EMAIL ERROR] Failed to send email:", err.message);
+      console.error("[SMS ERROR] Failed to send SMS:", err.message);
+    }
+  } else {
+    console.log("[SMS SKIPPED] Twilio credentials not fully configured in .env.");
+  }
+
+  if (email) {
+    let emailSent = false;
+
+    // Try Resend API first (fast and cloud-firewall friendly)
+    if (process.env.RESEND_API_KEY) {
+      try {
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+          },
+          body: JSON.stringify({
+            from: "LearnChart <onboarding@resend.dev>",
+            to: [email],
+            subject: "LearnChart - Verification Code",
+            html: `
+              <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                <h2>LearnChart Verification Code</h2>
+                <p>Your OTP code is:</p>
+                <h1 style="color: #d97706; letter-spacing: 5px;">${otp}</h1>
+                <p>This code will expire in 5 minutes.</p>
+              </div>
+            `,
+          }),
+        });
+
+        if (res.ok) {
+          emailSent = true;
+          console.log(`[RESEND EMAIL] Successfully sent to ${email}`);
+        } else {
+          const errData = await res.json();
+          console.error("[RESEND EMAIL ERROR]", errData);
+        }
+      } catch (err) {
+        console.error("[RESEND API ERROR]", err.message);
+      }
+    }
+
+    // Fallback to Nodemailer if Resend was not used or failed
+    if (!emailSent && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      try {
+        await transporter.sendMail({
+          from: `"LearnChart" <${process.env.EMAIL_USER}>`,
+          to: email,
+          subject: "LearnChart - Verification Code",
+          text: `Your verification code is: ${otp}\n\nIt will expire in 5 minutes.`
+        });
+        emailSent = true;
+        console.log(`[NODEMAILER EMAIL] Successfully sent to ${email}`);
+      } catch (err) {
+        console.error("[NODEMAILER EMAIL ERROR] Failed to send email:", err.message);
+      }
     }
   }
 
