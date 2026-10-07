@@ -12,15 +12,12 @@ const generateToken = (id) => jwt.sign({ id }, process.env.JWT_SECRET || "learnc
 
 const resendClient = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY.trim()) : null;
 
-// Configure email transporter explicitly for Port 587 (TLS)
+// Configure Gmail transporter using official service preset
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
-  requireTLS: true,
+  service: "gmail",
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+    user: process.env.EMAIL_USER ? process.env.EMAIL_USER.trim() : "",
+    pass: process.env.EMAIL_PASS ? process.env.EMAIL_PASS.trim() : ""
   }
 });
 
@@ -32,17 +29,41 @@ const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_ACCOU
 // Temporary in-memory store for OTPs
 const otpStore = new Map();
 
-// Helper to send email via Resend or Nodemailer
+// Helper to send email via Gmail SMTP or Resend
 const sendEmailOtp = async (email, otp) => {
   let emailSent = false;
   let lastError = null;
 
-  // 1. Try Resend SDK
-  if (resendClient) {
+  // 1. Try Gmail Nodemailer first (Sends to ANY email address)
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    try {
+      await transporter.sendMail({
+        from: `"LearnChart" <${process.env.EMAIL_USER.trim()}>`,
+        to: email.trim(),
+        subject: "LearnChart - Verification Code",
+        html: `
+          <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9fafb; border-radius: 8px;">
+            <h2 style="color: #111827;">LearnChart Verification Code</h2>
+            <p>Your OTP code for registration is:</p>
+            <h1 style="color: #d97706; letter-spacing: 6px; font-size: 32px; background: #fff; display: inline-block; padding: 10px 20px; border-radius: 6px; border: 1px solid #e5e7eb;">${otp}</h1>
+            <p style="color: #6b7280; font-size: 14px;">This code will expire in 5 minutes. Do not share this code with anyone.</p>
+          </div>
+        `
+      });
+      emailSent = true;
+      console.log(`[NODEMAILER GMAIL] Sent successfully to ${email}`);
+    } catch (err) {
+      lastError = err.message;
+      console.error("[NODEMAILER GMAIL ERROR]", err.message);
+    }
+  }
+
+  // 2. Try Resend SDK fallback if Nodemailer was not used or failed
+  if (!emailSent && resendClient) {
     try {
       const data = await resendClient.emails.send({
         from: "LearnChart <onboarding@resend.dev>",
-        to: [email],
+        to: [email.trim()],
         subject: "LearnChart - Verification Code",
         html: `
           <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; background-color: #f9fafb; border-radius: 8px;">
@@ -66,23 +87,6 @@ const sendEmailOtp = async (email, otp) => {
     }
   }
 
-  // 2. Fallback to Nodemailer (Gmail SMTP) if Resend failed or not configured
-  if (!emailSent && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-    try {
-      await transporter.sendMail({
-        from: `"LearnChart" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: "LearnChart - Verification Code",
-        text: `Your LearnChart verification code is: ${otp}\n\nIt will expire in 5 minutes.`
-      });
-      emailSent = true;
-      console.log(`[NODEMAILER EMAIL] Sent successfully to ${email}`);
-    } catch (err) {
-      lastError = err.message;
-      console.error("[NODEMAILER ERROR]", err.message);
-    }
-  }
-
   return { emailSent, lastError };
 };
 
@@ -91,7 +95,11 @@ router.post("/send-otp", async (req, res) => {
   if (!phone && !email) return res.status(400).json({ error: "Phone or email is required" });
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore.set(phone, { otp, expires: Date.now() + 300000 }); // 5 min expiry
+  const otpData = { otp, expires: Date.now() + 300000 };
+
+  // Store by both phone and email so verification always matches
+  if (phone) otpStore.set(phone.trim(), otpData);
+  if (email) otpStore.set(email.trim().toLowerCase(), otpData);
 
   console.log("-----------------------");
   console.log(`OTP generated for ${phone} / ${email || 'No Email'}: ${otp}`);
@@ -138,12 +146,13 @@ router.post("/register", async (req, res) => {
     return res.status(400).json({ error: "All fields including OTP are required" });
   }
 
-  // Verify OTP
-  const stored = otpStore.get(phone);
+  // Verify OTP by email or phone
+  const stored = otpStore.get(email?.trim().toLowerCase()) || otpStore.get(phone?.trim());
   if (!stored || stored.otp !== otp || stored.expires < Date.now()) {
-    return res.status(400).json({ error: "Invalid or expired OTP" });
+    return res.status(400).json({ error: "Invalid or expired OTP. Please click Resend OTP." });
   }
-  otpStore.delete(phone); // Clear OTP after use
+  if (email) otpStore.delete(email.trim().toLowerCase());
+  if (phone) otpStore.delete(phone.trim());
 
   if (name.length > 50 || !nameRegex.test(name)) {
     return res.status(400).json({ error: "Name should only contain letters and be max 50 characters" });
