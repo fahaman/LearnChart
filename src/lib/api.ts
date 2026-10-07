@@ -1,4 +1,4 @@
-const API_URL = `${import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000`}/api`;
+const API_URL = `${import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5005' : 'https://learnchart.onrender.com')}/api`;
 
 export const getAuthHeaders = () => {
   const token = localStorage.getItem("token");
