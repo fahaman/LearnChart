@@ -142,17 +142,21 @@ router.post("/register", async (req, res) => {
   const nameRegex = /^[a-zA-Z\s]+$/;
   const gmailRegex = /^[a-zA-Z0-9._%+-]+@gmail\.com$/;
 
-  if (!name || !username || !email || !phone || !password || !otp) {
-    return res.status(400).json({ error: "All fields including OTP are required" });
+  // OTP requirement disabled
+  // if (!name || !username || !email || !phone || !password || !otp) {
+  //   return res.status(400).json({ error: "All fields including OTP are required" });
+  // }
+  if (!name || !username || !email || !phone || !password) {
+    return res.status(400).json({ error: "All fields are required" });
   }
 
-  // Verify OTP by email or phone
-  const stored = otpStore.get(email?.trim().toLowerCase()) || otpStore.get(phone?.trim());
-  if (!stored || stored.otp !== otp || stored.expires < Date.now()) {
-    return res.status(400).json({ error: "Invalid or expired OTP. Please click Resend OTP." });
-  }
-  if (email) otpStore.delete(email.trim().toLowerCase());
-  if (phone) otpStore.delete(phone.trim());
+  // Verify OTP by email or phone (Disabled)
+  // const stored = otpStore.get(email?.trim().toLowerCase()) || otpStore.get(phone?.trim());
+  // if (!stored || stored.otp !== otp || stored.expires < Date.now()) {
+  //   return res.status(400).json({ error: "Invalid or expired OTP. Please click Resend OTP." });
+  // }
+  // if (email) otpStore.delete(email.trim().toLowerCase());
+  // if (phone) otpStore.delete(phone.trim());
 
   if (name.length > 50 || !nameRegex.test(name)) {
     return res.status(400).json({ error: "Name should only contain letters and be max 50 characters" });

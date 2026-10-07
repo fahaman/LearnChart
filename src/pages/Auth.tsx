@@ -116,21 +116,36 @@ const Auth = () => {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (mode === "signup" && !otpSent) {
-      handleSendOtp();
-      return;
-    }
+    // OTP step check disabled
+    // if (mode === "signup" && !otpSent) {
+    //   handleSendOtp();
+    //   return;
+    // }
 
     setLoading(true);
     try {
       if (mode === "signup") {
+        const parsed = schema.safeParse({ email, password, name, username, phone, countryCode });
+        if (!parsed.success) {
+          toast.error(parsed.error.issues[0].message);
+          setLoading(false);
+          return;
+        }
+
+        const country = COUNTRY_CODES.find(c => c.code === countryCode);
+        if (country && phone.length !== country.length) {
+          toast.error(`Phone number for ${country.country} must be exactly ${country.length} digits.`);
+          setLoading(false);
+          return;
+        }
+
         const { error } = await signUp({ 
             name, 
             username, 
             email, 
             phone: `${countryCode}${phone}`, 
             pass: password,
-            otp
+            otp: "000000" // OTP disabled default value
         });
         if (error) throw new Error(error);
         toast.success("Account created — welcome aboard!");
@@ -211,6 +226,7 @@ const Auth = () => {
                   </p>
                 </div>
 
+                {/* OTP Verification UI Disabled
                 {otpSent && (
                   <div className="space-y-1.5 animate-in slide-in-from-top-1">
                     <div className="flex justify-between items-center">
@@ -230,17 +246,18 @@ const Auth = () => {
                     </div>
                   </div>
                 )}
+                */}
               </>
             )}
             <div className="space-y-1.5">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@gmail.com" disabled={otpSent} />
+              <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@gmail.com" />
               {mode === "signup" && <p className="text-[10px] text-muted-foreground italic">Must be a valid @gmail.com address.</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="password">Password</Label>
               <div className="relative">
-                <Input id="password" type={showPassword ? "text" : "password"} autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} disabled={otpSent} />
+                <Input id="password" type={showPassword ? "text" : "password"} autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
                 <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-2.5 text-muted-foreground">
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -257,7 +274,7 @@ const Auth = () => {
               )}
             </div>
             <Button type="submit" variant="hero" className="w-full" size="lg" disabled={loading}>
-              {loading ? <Loader2 className="animate-spin" /> : mode === "signup" ? (otpSent ? "Verify & Create Account" : "Get OTP") : "Sign in"}
+              {loading ? <Loader2 className="animate-spin" /> : mode === "signup" ? "Create Account" : "Sign in"}
             </Button>
           </form>
           <div className="mt-5 text-center text-sm text-muted-foreground">
