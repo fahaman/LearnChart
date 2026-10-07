@@ -51,8 +51,22 @@ const Auth = () => {
   const [countryCode, setCountryCode] = useState("+91");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [resendTimer, setResendTimer] = useState(0);
   const [loading, setLoading] = useState(false);
   const { signIn, signUp, sendOtp } = useAuth();
+
+  const startCountdown = () => {
+    setResendTimer(30);
+    const interval = setInterval(() => {
+      setResendTimer((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
 
   const handleSendOtp = async () => {
     const validationData = { email, password, name, username, phone, countryCode };
@@ -74,9 +88,26 @@ const Auth = () => {
       const { error } = await sendOtp(fullPhone, email);
       if (error) throw new Error(error);
       setOtpSent(true);
+      startCountdown();
       toast.success("OTP sent to your email!");
     } catch (err: any) {
       toast.error(err.message ?? "Failed to send OTP");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendTimer > 0) return;
+    setLoading(true);
+    try {
+      const fullPhone = `${countryCode}${phone}`;
+      const { error } = await sendOtp(fullPhone, email);
+      if (error) throw new Error(error);
+      startCountdown();
+      toast.success("New OTP sent to your email!");
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to resend OTP");
     } finally {
       setLoading(false);
     }
@@ -143,23 +174,24 @@ const Auth = () => {
               <>
                 <div className="space-y-1.5">
                   <Label htmlFor="name">Full Name</Label>
-                  <Input id="name" type="text" value={name} onChange={(e) => setName(e.target.value)} required placeholder="John Doe" maxLength={50} />
+                  <Input id="name" type="text" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Mohammed Fahaman" maxLength={50} />
                   <p className="text-[10px] text-muted-foreground italic">Max 50 characters, letters only.</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="username">Username</Label>
-                  <Input id="username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} required placeholder="johndoe" />
+                  <Input id="username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} required placeholder="mohammed_fahaman" />
                   <p className="text-[10px] text-muted-foreground italic">Letters, numbers, and symbols allowed (no spaces).</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="phone">Phone Number</Label>
                   <div className="flex gap-2">
-                    <select 
-                      id="countryCode" 
-                      value={countryCode} 
+                    <select
+                      id="countryCode"
+                      aria-label="Country code"
+                      title="Country code"
+                      value={countryCode}
                       onChange={(e) => setCountryCode(e.target.value)}
-                      className="bg-background border border-input rounded-md px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-gold transition"
-                    >
+                      className="bg-background border border-input rounded-md px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-gold transition">
                       {COUNTRY_CODES.map(c => (
                         <option key={c.code} value={c.code}>{c.code} ({c.country})</option>
                       ))}
@@ -183,10 +215,19 @@ const Auth = () => {
                   <div className="space-y-1.5 animate-in slide-in-from-top-1">
                     <div className="flex justify-between items-center">
                       <Label htmlFor="otp">Verification Code (OTP)</Label>
-                      <button type="button" onClick={() => setOtpSent(false)} className="text-[10px] text-gold hover:underline">Change Phone</button>
+                      <button type="button" onClick={() => setOtpSent(false)} className="text-[10px] text-gold hover:underline">Change Details</button>
                     </div>
                     <Input id="otp" type="text" value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} required placeholder="123456" maxLength={6} className="text-center tracking-[1em] font-bold text-lg" />
-                    <p className="text-[10px] text-muted-foreground italic">Enter the 6-digit code sent to your email ({email}).</p>
+                    <div className="flex justify-between items-center mt-1">
+                      <p className="text-[10px] text-muted-foreground italic">Code sent to {email}</p>
+                      <button 
+                        type="button" 
+                        onClick={handleResendOtp} 
+                        disabled={resendTimer > 0 || loading}
+                        className="text-xs text-gold hover:underline font-semibold disabled:text-muted-foreground disabled:no-underline disabled:cursor-not-allowed">
+                        {resendTimer > 0 ? `Resend OTP in ${resendTimer}s` : "Resend OTP"}
+                      </button>
+                    </div>
                   </div>
                 )}
               </>
